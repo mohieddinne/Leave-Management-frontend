@@ -36,9 +36,23 @@ interface CalEvent {
 const statusColor: Record<string, string> = {
   PENDING: '#eab308', APPROVED: '#22c55e', REJECTED: '#ef4444', CANCELLED: '#9ca3af',
 }
+
+function normalizeStatus(status: string | undefined): string {
+  if (!status) return ''
+  // Backend can return display labels (e.g. "Pending") instead of enum names ("PENDING").
+  return status.trim().toUpperCase().replace(/\s+/g, '_')
+}
+
+function parseApiDate(value: string | undefined, endOfDay = false): Date {
+  if (!value) return new Date(NaN)
+  if (value.includes('T')) return new Date(value)
+  return new Date(value + (endOfDay ? 'T23:59:59' : 'T00:00:00'))
+}
+
 function eventStyleGetter(event: CalEvent) {
   const req = event.resource
-  const bg = req.leaveType?.colorCode ?? statusColor[req.status] ?? '#3b82f6'
+  // Calendar legend is status-based; keep event color consistent with status first.
+  const bg = statusColor[normalizeStatus(req.status)] ?? req.leaveType?.colorCode ?? '#3b82f6'
   return { style: { backgroundColor: bg, borderColor: bg, color: '#fff', borderRadius: '4px', fontSize: '12px', padding: '1px 4px' } }
 }
 
@@ -94,15 +108,16 @@ export default function CalendarPage() {
   // Convert leave requests to calendar events
   const events: CalEvent[] = requests
     .filter(r => {
-      const statusMatch = statusFilter.split(',').includes(r.status)
+      const normalized = normalizeStatus(r.status)
+      const statusMatch = statusFilter.split(',').includes(normalized)
       const deptMatch = !deptFilter || String(r.employee?.department?.id) === deptFilter
       return statusMatch && deptMatch
     })
     .map(r => ({
       id: r.id,
       title: `${r.employee?.firstName ?? ''} ${r.employee?.lastName ?? ''} — ${r.leaveType?.name ?? ''}`,
-      start: new Date(r.startDate + 'T00:00:00'),
-      end: new Date(r.endDate + 'T23:59:59'),
+      start: parseApiDate(r.startDate),
+      end: parseApiDate(r.endDate, true),
       resource: r,
     }))
 

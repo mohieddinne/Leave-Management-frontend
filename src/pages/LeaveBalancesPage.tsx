@@ -3,6 +3,7 @@ import toast from 'react-hot-toast'
 import { leaveBalanceApi, employeeApi, leaveTypeApi } from '../services/api'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
 import Modal from '../components/shared/Modal'
+import { useAuth } from '../context/AuthContext'
 import type { Employee, LeaveType, LeaveBalance } from '../types'
 import { HiChartBar, HiRefresh } from 'react-icons/hi'
 
@@ -42,6 +43,10 @@ function InitForm({ employees, leaveTypes, onSubmit, onCancel }: {
 }
 
 export default function LeaveBalancesPage() {
+  const { user } = useAuth()
+  const isAdmin    = user?.role === 'ADMIN'
+  const isEmployee = user?.role === 'EMPLOYEE'
+
   const [employees, setEmployees] = useState<Employee[]>([])
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([])
   const [selectedEmployee, setSelectedEmployee] = useState('')
@@ -51,11 +56,22 @@ export default function LeaveBalancesPage() {
   const [modal, setModal] = useState(false)
 
   useEffect(() => {
-    Promise.all([employeeApi.getAll(), leaveTypeApi.getAll()])
-      .then(([emps, types]) => { setEmployees(emps.data); setLeaveTypes(types.data) })
+    Promise.all([
+      isEmployee ? Promise.resolve({ data: [] as Employee[] }) : employeeApi.getAll(),
+      leaveTypeApi.getAll(),
+    ])
+      .then(([emps, types]) => {
+        setEmployees(emps.data)
+        setLeaveTypes(types.data)
+        // EMPLOYEE: auto-load own balances
+        if (isEmployee && user?.employeeId) {
+          setSelectedEmployee(String(user.employeeId))
+          loadBalances(String(user.employeeId))
+        }
+      })
       .catch(() => toast.error('Erreur de chargement'))
       .finally(() => setLoadingInit(false))
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadBalances = async (empId: string) => {
     if (!empId) return
@@ -66,8 +82,19 @@ export default function LeaveBalancesPage() {
   }
 
   const handleInit = async (form: { employeeId: string; leaveTypeId: string; year: number }) => {
+    // Validate required fields
+    if (!form.employeeId || !form.leaveTypeId) {
+      toast.error('Veuillez sélectionner un employé et un type de congé')
+      return
+    }
     try {
-      await leaveBalanceApi.initialize({ employeeId: Number(form.employeeId), leaveTypeId: Number(form.leaveTypeId), year: form.year })
+      const payload = {
+        employeeId: Number(form.employeeId),
+        leaveTypeId: Number(form.leaveTypeId),
+        year: form.year
+      }
+      console.log('Initializing balance with:', payload)
+      await leaveBalanceApi.initialize(payload)
       toast.success('Solde initialisé'); setModal(false)
       if (selectedEmployee) loadBalances(selectedEmployee)
     } catch (e: unknown) { toast.error((e as Error).message) }
@@ -118,17 +145,21 @@ export default function LeaveBalancesPage() {
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
         <div><h1 className="text-2xl font-bold text-gray-900">Soldes de Congés</h1><p className="text-gray-500 text-sm mt-1">Consultation et initialisation</p></div>
-        <button className="btn-primary flex items-center gap-2" onClick={() => setModal(true)}><HiRefresh className="w-4 h-4" /> Initialiser un solde</button>
-      </div>
-      <div className="card mb-6">
-        <label className="label">Sélectionner un employé</label>
-        {loadingInit ? <LoadingSpinner size="sm" /> : (
-          <select className="input-field max-w-sm" value={selectedEmployee} onChange={e => { setSelectedEmployee(e.target.value); loadBalances(e.target.value) }}>
-            <option value="">-- Choisir un employé --</option>
-            {employees.map(e => <option key={e.id} value={e.id}>{e.firstName} {e.lastName}</option>)}
-          </select>
+        {isAdmin && (
+          <button className="btn-primary flex items-center gap-2" onClick={() => setModal(true)}><HiRefresh className="w-4 h-4" /> Initialiser un solde</button>
         )}
       </div>
+      {!isEmployee && (
+        <div className="card mb-6">
+          <label className="label">Sélectionner un employé</label>
+          {loadingInit ? <LoadingSpinner size="sm" /> : (
+            <select className="input-field max-w-sm" value={selectedEmployee} onChange={e => { setSelectedEmployee(e.target.value); loadBalances(e.target.value) }}>
+              <option value="">-- Choisir un employé --</option>
+              {employees.map(e => <option key={e.id} value={e.id}>{e.firstName} {e.lastName}</option>)}
+            </select>
+          )}
+        </div>
+      )}
       {loading && <LoadingSpinner size="lg" className="mt-10" />}
       {!loading && selectedEmployee && balances.length === 0 && (
         <div className="card text-center py-16"><HiChartBar className="w-12 h-12 text-gray-300 mx-auto mb-3" /><p className="text-gray-500">Aucun solde. Initialisez-en un !</p></div>

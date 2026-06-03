@@ -5,6 +5,7 @@ import LoadingSpinner from '../components/shared/LoadingSpinner'
 import Modal from '../components/shared/Modal'
 import ConfirmDialog from '../components/shared/ConfirmDialog'
 import { StatusBadge } from '../components/shared/Badges'
+import { useAuth } from '../context/AuthContext'
 import type { LeaveRequest, Employee, LeaveType, LeaveStatus, LeaveRequestDto } from '../types'
 import { HiPlus, HiCheck, HiX, HiTrash, HiFilter, HiClipboardList } from 'react-icons/hi'
 
@@ -17,14 +18,40 @@ const statusLabel: Record<string, string> = {
   CANCELLED: 'Annulés' 
 }
 
-function RequestForm({ employees, leaveTypes, onSubmit, onCancel }: {
+function normalizeStatus(status: string | undefined): LeaveStatus | '' {
+  if (!status) return ''
+  const normalized = status.trim().toUpperCase().replace(/\s+/g, '_')
+  if (normalized === 'PENDING' || normalized === 'APPROVED' || normalized === 'REJECTED' || normalized === 'CANCELLED') {
+    return normalized
+  }
+  return ''
+}
+
+function deriveRoleFromRequest(req: LeaveRequest): 'ADMIN' | 'MANAGER' | 'EMPLOYEE' {
+  const email = req.employee?.email?.toLowerCase() ?? ''
+  const title = req.employee?.jobTitle?.toLowerCase() ?? ''
+  if (email.includes('admin') || title.includes('admin') || title.includes(' rh') || title === 'rh') {
+    return 'ADMIN'
+  }
+  const hasManager = !!req.employee?.manager?.id
+  if (!hasManager || title.includes('manager') || title.includes('director') || title.includes('chef') || title.includes('head') || title.includes('responsable')) {
+    return 'MANAGER'
+  }
+  return 'EMPLOYEE'
+}
+
+interface RequestFormProps {
+  /** When set, the employee field is locked to this ID (EMPLOYEE role) */
+  fixedEmployeeId?: number
   employees: Employee[]
   leaveTypes: LeaveType[]
   onSubmit: (d: LeaveRequestDto) => void
   onCancel: () => void
-}) {
+}
+
+function RequestForm({ fixedEmployeeId, employees, leaveTypes, onSubmit, onCancel }: RequestFormProps) {
   const [form, setForm] = useState({ 
-    employeeId: '', 
+    employeeId: fixedEmployeeId ? String(fixedEmployeeId) : '', 
     leaveTypeId: '', 
     startDate: '', 
     endDate: '', 
@@ -43,18 +70,15 @@ function RequestForm({ employees, leaveTypes, onSubmit, onCancel }: {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-
-    // Validation (optionnelle)
     if (!form.employeeId || !form.leaveTypeId) {
       toast.error('Veuillez sélectionner un employé et un type de congé')
       return
     }
-    if (new Date(form.endDate) < new Date(form.startDate)) {
+    if (form.endDate && form.startDate && new Date(form.endDate) < new Date(form.startDate)) {
       toast.error('La date de fin doit être après la date de début')
       return
     }
-
-    const payload: LeaveRequestDto = {
+    onSubmit({
       employeeId: Number(form.employeeId),
       leaveTypeId: Number(form.leaveTypeId),
       startDate: form.startDate,
@@ -64,33 +88,38 @@ function RequestForm({ employees, leaveTypes, onSubmit, onCancel }: {
       isEmergency: form.isEmergency,
       ...(form.reason.trim() && { reason: form.reason.trim() }),
       ...(form.contactInfo.trim() && { contactInfo: form.contactInfo.trim() })
-    }
-
-    onSubmit(payload)
+    })
   }
+
+  const fixedEmployee = fixedEmployeeId ? employees.find(e => e.id === fixedEmployeeId) : null
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div>
-        <label className="label">Employé *</label>
-        <select className="input-field" required value={form.employeeId} onChange={set('employeeId')}>
-          <option value="">-- Sélectionner --</option>
-          {employees.map(e => (
-            <option key={e.id} value={e.id}>
-              {e.firstName} {e.lastName}
-            </option>
-          ))}
-        </select>
-      </div>
+      {fixedEmployee ? (
+        <div>
+          <label className="label">Employé</label>
+          <p className="input-field bg-gray-50 text-gray-700 cursor-not-allowed">
+            {fixedEmployee.firstName} {fixedEmployee.lastName}
+          </p>
+        </div>
+      ) : (
+        <div>
+          <label className="label">Employé *</label>
+          <select className="input-field" required value={form.employeeId} onChange={set('employeeId')}>
+            <option value="">-- Sélectionner --</option>
+            {employees.map(e => (
+              <option key={e.id} value={e.id}>{e.firstName} {e.lastName}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div>
         <label className="label">Type de congé *</label>
         <select className="input-field" required value={form.leaveTypeId} onChange={set('leaveTypeId')}>
           <option value="">-- Sélectionner --</option>
           {leaveTypes.map(lt => (
-            <option key={lt.id} value={lt.id}>
-              {lt.name}
-            </option>
+            <option key={lt.id} value={lt.id}>{lt.name}</option>
           ))}
         </select>
       </div>
@@ -98,79 +127,44 @@ function RequestForm({ employees, leaveTypes, onSubmit, onCancel }: {
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="label">Début *</label>
-          <input 
-            className="input-field" 
-            type="date" 
-            required 
-            value={form.startDate} 
-            onChange={set('startDate')} 
-          />
+          <input className="input-field" type="date" required value={form.startDate} onChange={set('startDate')} />
         </div>
         <div>
           <label className="label">Fin *</label>
-          <input 
-            className="input-field" 
-            type="date" 
-            required 
-            value={form.endDate} 
-            onChange={set('endDate')} 
-          />
+          <input className="input-field" type="date" required value={form.endDate} onChange={set('endDate')} />
         </div>
       </div>
 
       <div>
         <label className="label">Motif</label>
-        <textarea 
-          className="input-field resize-none" 
-          rows={2} 
-          value={form.reason} 
-          onChange={set('reason')} 
-          placeholder="Raison de la demande (optionnel)"
-        />
+        <textarea className="input-field resize-none" rows={2} value={form.reason} onChange={set('reason')} placeholder="Raison de la demande (optionnel)" />
       </div>
 
       <div>
         <label className="label">Contact d'urgence</label>
-        <input 
-          className="input-field" 
-          value={form.contactInfo} 
-          onChange={set('contactInfo')} 
-          placeholder="Numéro ou email (optionnel)"
-        />
+        <input className="input-field" value={form.contactInfo} onChange={set('contactInfo')} placeholder="Numéro ou email (optionnel)" />
       </div>
 
       <div className="flex gap-4 flex-wrap">
-        {[
-          ['halfDayStart', 'Demi-journée début'], 
-          ['halfDayEnd', 'Demi-journée fin'], 
-          ['isEmergency', 'Urgence']
-        ].map(([k, l]) => (
+        {[['halfDayStart', 'Demi-journée début'], ['halfDayEnd', 'Demi-journée fin'], ['isEmergency', 'Urgence']].map(([k, l]) => (
           <label key={k} className="flex items-center gap-2 cursor-pointer text-sm">
-            <input 
-              type="checkbox" 
-              checked={!!(form as Record<string, unknown>)[k]} 
-              onChange={toggle(k)} 
-              className="rounded" 
-            />
+            <input type="checkbox" checked={!!(form as Record<string, unknown>)[k]} onChange={toggle(k)} className="rounded" />
             {l}
           </label>
         ))}
       </div>
 
       <div className="flex gap-3 justify-end pt-2">
-        <button type="button" className="btn-secondary" onClick={onCancel}>
-          Annuler
-        </button>
-        <button type="submit" className="btn-primary">
-          Soumettre
-        </button>
+        <button type="button" className="btn-secondary" onClick={onCancel}>Annuler</button>
+        <button type="submit" className="btn-primary">Soumettre</button>
       </div>
     </form>
   )
 }
 
-function CommentModal({ title, onSubmit, onCancel }: { 
+function CommentModal({ title, required: isRequired = false, onSubmit, onCancel }: { 
   title: string
+  required?: boolean
   onSubmit: (c: string) => void
   onCancel: () => void 
 }) {
@@ -179,22 +173,19 @@ function CommentModal({ title, onSubmit, onCancel }: {
   return (
     <form onSubmit={e => { e.preventDefault(); onSubmit(comment) }} className="space-y-4">
       <div>
-        <label className="label">Commentaire</label>
+        <label className="label">Commentaire{isRequired ? ' *' : ''}</label>
         <textarea 
           className="input-field resize-none" 
           rows={3} 
+          required={isRequired}
           value={comment} 
           onChange={e => setComment(e.target.value)} 
-          placeholder="Ajouter un commentaire (optionnel)"
+          placeholder={isRequired ? 'Commentaire obligatoire' : 'Ajouter un commentaire (optionnel)'}
         />
       </div>
       <div className="flex gap-3 justify-end">
-        <button type="button" className="btn-secondary" onClick={onCancel}>
-          Annuler
-        </button>
-        <button type="submit" className="btn-primary">
-          {title}
-        </button>
+        <button type="button" className="btn-secondary" onClick={onCancel}>Annuler</button>
+        <button type="submit" className="btn-primary">{title}</button>
       </div>
     </form>
   )
@@ -203,6 +194,9 @@ function CommentModal({ title, onSubmit, onCancel }: {
 type ModalState = 'create' | { type: 'approve' | 'reject' | 'cancel'; req: LeaveRequest } | null
 
 export default function LeaveRequestsPage() {
+  const { user } = useAuth()
+  const isEmployee = user?.role === 'EMPLOYEE'
+
   const [requests, setRequests] = useState<LeaveRequest[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([])
@@ -212,26 +206,39 @@ export default function LeaveRequestsPage() {
 
   const load = async () => {
     try {
-      const [reqs, emps, types] = await Promise.all([
-        leaveRequestApi.getAll(), 
-        employeeApi.getAll(), 
-        leaveTypeApi.getActive().catch(() => leaveTypeApi.getAll())
-      ])
-      setRequests(reqs.data)
-      setEmployees(emps.data)
-      setLeaveTypes(types.data)
+      const leaveTypesPromise = leaveTypeApi.getActive().catch(() => leaveTypeApi.getAll())
+
+      if (isEmployee && user.employeeId) {
+        // EMPLOYEE: only load own requests
+        const [reqs, types, emp] = await Promise.all([
+          leaveRequestApi.getByEmployee(user.employeeId),
+          leaveTypesPromise,
+          employeeApi.getById(user.employeeId),
+        ])
+        setRequests(reqs.data)
+        setLeaveTypes(types.data)
+        setEmployees([emp.data])
+      } else {
+        const [reqs, emps, types] = await Promise.all([
+          leaveRequestApi.getAll(),
+          employeeApi.getAll(),
+          leaveTypesPromise,
+        ])
+        setRequests(reqs.data)
+        setEmployees(emps.data)
+        setLeaveTypes(types.data)
+      }
     } catch (error) {
-      console.error('Erreur de chargement:', error)
       toast.error('Erreur de chargement des données')
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const displayRequests = statusFilter 
-    ? requests.filter(r => r.status === statusFilter) 
+    ? requests.filter(r => normalizeStatus(r.status) === statusFilter) 
     : requests
 
   const handleCreate = async (payload: LeaveRequestDto) => {
@@ -241,12 +248,17 @@ export default function LeaveRequestsPage() {
       setModal(null)
       load()
     } catch (error: unknown) {
-      console.error('Erreur création:', error)
-      // ✅ Meilleure gestion des erreurs
-      const message = error instanceof Error 
-        ? error.message 
-        : 'Erreur lors de la création de la demande'
-      toast.error(message)
+      const apiMessage =
+        typeof error === 'object' &&
+        error !== null &&
+        'response' in error &&
+        typeof (error as { response?: { data?: unknown } }).response?.data === 'object' &&
+        (error as { response?: { data?: { message?: unknown } } }).response?.data?.message &&
+        typeof (error as { response?: { data?: { message?: unknown } } }).response?.data?.message === 'string'
+          ? (error as { response?: { data?: { message?: string } } }).response?.data?.message
+          : null
+
+      toast.error(apiMessage ?? 'Erreur lors de la création de la demande')
     }
   }
 
@@ -258,7 +270,6 @@ export default function LeaveRequestsPage() {
       setModal(null)
       load()
     } catch (error: unknown) {
-      console.error('Erreur approbation:', error)
       toast.error(error instanceof Error ? error.message : 'Erreur lors de l\'approbation')
     }
   }
@@ -271,7 +282,6 @@ export default function LeaveRequestsPage() {
       setModal(null)
       load()
     } catch (error: unknown) {
-      console.error('Erreur rejet:', error)
       toast.error(error instanceof Error ? error.message : 'Erreur lors du rejet')
     }
   }
@@ -284,9 +294,27 @@ export default function LeaveRequestsPage() {
       setModal(null)
       load()
     } catch (error: unknown) {
-      console.error('Erreur annulation:', error)
       toast.error(error instanceof Error ? error.message : 'Erreur lors de l\'annulation')
     }
+  }
+
+  const canCurrentUserApprove = (req: LeaveRequest): boolean => {
+    if (!user || normalizeStatus(req.status) !== 'PENDING') return false
+
+    const requesterRole = deriveRoleFromRequest(req)
+
+    if (requesterRole === 'ADMIN') return false
+
+    if (requesterRole === 'MANAGER') {
+      return user.role === 'ADMIN'
+    }
+
+    if (requesterRole === 'EMPLOYEE') {
+      if (user.role === 'ADMIN') return true
+      return user.role === 'MANAGER' && !!user.employeeId && req.employee?.manager?.id === user.employeeId
+    }
+
+    return false
   }
 
   return (
@@ -374,7 +402,7 @@ export default function LeaveRequestsPage() {
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex gap-1 justify-end">
-                      {req.status === 'PENDING' && (
+                      {canCurrentUserApprove(req) && (
                         <>
                           <button 
                             title="Approuver" 
@@ -392,7 +420,7 @@ export default function LeaveRequestsPage() {
                           </button>
                         </>
                       )}
-                      {(req.status === 'PENDING' || req.status === 'APPROVED') && (
+                      {(normalizeStatus(req.status) === 'PENDING' || normalizeStatus(req.status) === 'APPROVED') && (
                         <button 
                           title="Annuler" 
                           onClick={() => setModal({ type: 'cancel', req })} 
@@ -417,6 +445,7 @@ export default function LeaveRequestsPage() {
         maxWidth="max-w-xl"
       >
         <RequestForm 
+          fixedEmployeeId={isEmployee && user?.employeeId ? user.employeeId : undefined}
           employees={employees} 
           leaveTypes={leaveTypes} 
           onSubmit={handleCreate} 
@@ -442,7 +471,8 @@ export default function LeaveRequestsPage() {
         title="Rejeter la demande"
       >
         <CommentModal 
-          title="Rejeter" 
+          title="Rejeter"
+          required
           onSubmit={handleReject} 
           onCancel={() => setModal(null)} 
         />

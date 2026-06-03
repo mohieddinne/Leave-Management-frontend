@@ -4,25 +4,27 @@ import { employeeApi, departmentApi } from '../services/api'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
 import Modal from '../components/shared/Modal'
 import ConfirmDialog from '../components/shared/ConfirmDialog'
+import { useAuth } from '../context/AuthContext'
 import type { Employee, Department } from '../types'
 import { HiPlus, HiPencil, HiTrash, HiUser, HiSearch } from 'react-icons/hi'
 
 interface EmpFormState {
   firstName: string; lastName: string; email: string
-  jobTitle: string; hireDate: string; departmentId: string
+  jobTitle: string; hireDate: string; departmentId: string; managerId?: string
 }
 
-function EmployeeForm({ initial, departments, onSubmit, onCancel }: {
-  initial?: EmpFormState; departments: Department[]
+function EmployeeForm({ initial, departments, employees, onSubmit, onCancel }: {
+  initial?: EmpFormState; departments: Department[]; employees: Employee[]
   onSubmit: (p: object) => void; onCancel: () => void
 }) {
-  const [form, setForm] = useState<EmpFormState>(initial ?? { firstName:'', lastName:'', email:'', jobTitle:'', hireDate:'', departmentId:'' })
+  const [form, setForm] = useState<EmpFormState>(initial ?? { firstName:'', lastName:'', email:'', jobTitle:'', hireDate:'', departmentId:'', managerId:'' })
   const set = (k: keyof EmpFormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm(f => ({ ...f, [k]: e.target.value }))
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     const payload: Record<string, unknown> = { firstName: form.firstName, lastName: form.lastName, email: form.email, jobTitle: form.jobTitle, hireDate: form.hireDate }
     if (form.departmentId) payload.department = { id: Number(form.departmentId) }
+    if (form.managerId) payload.managerId = Number(form.managerId)
     onSubmit(payload)
   }
   return (
@@ -41,6 +43,18 @@ function EmployeeForm({ initial, departments, onSubmit, onCancel }: {
           {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
         </select>
       </div>
+      <div>
+        <label className="label">Manager</label>
+        <select className="input-field" value={form.managerId || ''} onChange={set('managerId')}>
+          <option value="">-- Aucun --</option>
+          {employees
+            .filter(e => {
+              const title = e.jobTitle?.toLowerCase() || ''
+              return title.includes('manager') || title.includes('chef') || title.includes('responsable') || title.includes('admin') || title.includes('rh')
+            })
+            .map(e => <option key={e.id} value={e.id}>{e.firstName} {e.lastName}</option>)}
+        </select>
+      </div>
       <div className="flex gap-3 justify-end pt-2">
         <button type="button" className="btn-secondary" onClick={onCancel}>Annuler</button>
         <button type="submit" className="btn-primary">Enregistrer</button>
@@ -52,6 +66,8 @@ function EmployeeForm({ initial, departments, onSubmit, onCancel }: {
 type ModalState = 'create' | { type: 'edit'; emp: Employee } | { type: 'delete'; emp: Employee } | null
 
 export default function EmployeesPage() {
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'ADMIN'
   const [employees, setEmployees] = useState<Employee[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [loading, setLoading] = useState(true)
@@ -90,7 +106,9 @@ export default function EmployeesPage() {
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
         <div><h1 className="text-2xl font-bold text-gray-900">Employés</h1><p className="text-gray-500 text-sm mt-1">{employees.length} employé(s)</p></div>
-        <button className="btn-primary flex items-center gap-2" onClick={() => setModal('create')}><HiPlus className="w-4 h-4" /> Nouvel employé</button>
+        {isAdmin && (
+          <button className="btn-primary flex items-center gap-2" onClick={() => setModal('create')}><HiPlus className="w-4 h-4" /> Nouvel employé</button>
+        )}
       </div>
       <div className="relative mb-6">
         <HiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
@@ -121,8 +139,12 @@ export default function EmployeesPage() {
                   <td className="px-6 py-4 text-gray-600">{emp.hireDate || '—'}</td>
                   <td className="px-6 py-4">
                     <div className="flex gap-1 justify-end">
-                      <button onClick={() => setModal({ type: 'edit', emp })} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><HiPencil className="w-4 h-4" /></button>
-                      <button onClick={() => setModal({ type: 'delete', emp })} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><HiTrash className="w-4 h-4" /></button>
+                      {isAdmin && (
+                        <>
+                          <button onClick={() => setModal({ type: 'edit', emp })} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><HiPencil className="w-4 h-4" /></button>
+                          <button onClick={() => setModal({ type: 'delete', emp })} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><HiTrash className="w-4 h-4" /></button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -131,15 +153,15 @@ export default function EmployeesPage() {
           </table>
         </div>
       )}
-      <Modal isOpen={modal === 'create'} onClose={() => setModal(null)} title="Nouvel employé">
-        <EmployeeForm departments={departments} onSubmit={handleCreate} onCancel={() => setModal(null)} />
+      <Modal isOpen={isAdmin && modal === 'create'} onClose={() => setModal(null)} title="Nouvel employé">
+        <EmployeeForm departments={departments} employees={employees} onSubmit={handleCreate} onCancel={() => setModal(null)} />
       </Modal>
-      <Modal isOpen={typeof modal === 'object' && modal !== null && modal.type === 'edit'} onClose={() => setModal(null)} title="Modifier l'employé">
+      <Modal isOpen={isAdmin && typeof modal === 'object' && modal !== null && modal.type === 'edit'} onClose={() => setModal(null)} title="Modifier l'employé">
         {typeof modal === 'object' && modal !== null && modal.type === 'edit' && (
-          <EmployeeForm initial={{ ...modal.emp, jobTitle: modal.emp.jobTitle??'', hireDate: modal.emp.hireDate??'', departmentId: String(modal.emp.department?.id??'') }} departments={departments} onSubmit={handleEdit} onCancel={() => setModal(null)} />
+          <EmployeeForm initial={{ ...modal.emp, jobTitle: modal.emp.jobTitle??'', hireDate: modal.emp.hireDate??'', departmentId: String(modal.emp.department?.id??''), managerId: String(modal.emp.manager?.id??'') }} departments={departments} employees={employees} onSubmit={handleEdit} onCancel={() => setModal(null)} />
         )}
       </Modal>
-      <ConfirmDialog isOpen={typeof modal === 'object' && modal !== null && modal.type === 'delete'} onClose={() => setModal(null)} onConfirm={handleDelete}
+      <ConfirmDialog isOpen={isAdmin && typeof modal === 'object' && modal !== null && modal.type === 'delete'} onClose={() => setModal(null)} onConfirm={handleDelete}
         title="Supprimer l'employé" message={`Supprimer ${typeof modal === 'object' && modal !== null && modal.type === 'delete' ? `${modal.emp.firstName} ${modal.emp.lastName}` : ''} ?`} confirmLabel="Supprimer" danger />
     </div>
   )

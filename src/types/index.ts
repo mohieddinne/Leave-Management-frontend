@@ -1,3 +1,14 @@
+// ── Auth Types ───────────────────────────────────────────────
+export type UserRole = 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+
+export interface AuthUser {
+  token: string
+  username: string
+  role: UserRole
+  employeeId: number | null
+  fullName: string
+}
+
 // ── Shared Types ─────────────────────────────────────────────
 export interface Department {
   id: number
@@ -15,6 +26,7 @@ export interface Employee {
   jobTitle?: string
   hireDate?: string
   department?: Department
+  manager?: { id: number }
 }
 
 export interface LeaveType {

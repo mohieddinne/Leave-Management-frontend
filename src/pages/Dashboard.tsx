@@ -4,6 +4,7 @@ import { departmentApi, employeeApi, leaveRequestApi, leaveTypeApi } from '../se
 import LoadingSpinner from '../components/shared/LoadingSpinner'
 import { StatusBadge } from '../components/shared/Badges'
 import type { LeaveRequest } from '../types'
+import { useAuth } from '../context/AuthContext'
 import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
 
@@ -22,33 +23,42 @@ function StatCard({ label, value, color, to }: { label: string; value: number; c
 }
 
 export default function Dashboard() {
+  const { user } = useAuth()
   const [stats, setStats] = useState<Stats | null>(null)
   const [recentRequests, setRecentRequests] = useState<LeaveRequest[]>([])
   const [loading, setLoading] = useState(true)
 
+  const isAdmin   = user?.role === 'ADMIN'
+  const isManager = user?.role === 'MANAGER'
+
   useEffect(() => {
-    Promise.allSettled([
-      departmentApi.getAll(), employeeApi.getAll(),
-      leaveRequestApi.getAll(), leaveTypeApi.getAll(),
-    ]).then(([depts, emps, reqs, types]) => {
+    const fetches = [
+      isAdmin || isManager ? departmentApi.getAll()  : Promise.resolve({ data: [] }),
+      isAdmin || isManager ? employeeApi.getAll()    : Promise.resolve({ data: [] }),
+      leaveRequestApi.getAll(),
+      isAdmin ? leaveTypeApi.getAll() : Promise.resolve({ data: [] }),
+    ] as const
+
+    Promise.allSettled(fetches).then(([depts, emps, reqs, types]) => {
       const departments = depts.status === 'fulfilled' ? depts.value.data : []
       const employees   = emps.status  === 'fulfilled' ? emps.value.data  : []
       const requests    = reqs.status  === 'fulfilled' ? reqs.value.data  : []
       const leaveTypes  = types.status === 'fulfilled' ? types.value.data : []
       setStats({
-        departments: departments.length, employees: employees.length,
-        leaveTypes: leaveTypes.length,
-        pending:  requests.filter(r => r.status === 'PENDING').length,
-        approved: requests.filter(r => r.status === 'APPROVED').length,
-        rejected: requests.filter(r => r.status === 'REJECTED').length,
-        total: requests.length,
+        departments: (departments as unknown[]).length,
+        employees:   (employees   as unknown[]).length,
+        leaveTypes:  (leaveTypes  as unknown[]).length,
+        pending:  (requests as LeaveRequest[]).filter(r => r.status === 'PENDING').length,
+        approved: (requests as LeaveRequest[]).filter(r => r.status === 'APPROVED').length,
+        rejected: (requests as LeaveRequest[]).filter(r => r.status === 'REJECTED').length,
+        total:    (requests as LeaveRequest[]).length,
       })
       setRecentRequests(
-        [...requests].sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime()).slice(0, 8)
+        [...(requests as LeaveRequest[])].sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime()).slice(0, 8)
       )
       setLoading(false)
     })
-  }, [])
+  }, [isAdmin, isManager])
 
   if (loading) return <div className="p-8"><LoadingSpinner size="lg" className="mt-20" /></div>
   if (!stats) return null
@@ -60,10 +70,16 @@ export default function Dashboard() {
         <p className="text-gray-500 text-sm mt-1">{format(new Date(), 'EEEE d MMMM yyyy', { locale: fr })}</p>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatCard label="Employés"            value={stats.employees}   color="border-blue-500"   to="/employees" />
-        <StatCard label="Départements"        value={stats.departments} color="border-purple-500" to="/departments" />
-        <StatCard label="Demandes en attente" value={stats.pending}     color="border-yellow-500" to="/leave-requests" />
-        <StatCard label="Types de congés"     value={stats.leaveTypes}  color="border-green-500"  to="/leave-types" />
+        {(isAdmin || isManager) && (
+          <StatCard label="Employés"     value={stats.employees}   color="border-blue-500"   to="/employees" />
+        )}
+        {(isAdmin || isManager) && (
+          <StatCard label="Départements" value={stats.departments} color="border-purple-500" to="/departments" />
+        )}
+        <StatCard label="Demandes en attente" value={stats.pending}    color="border-yellow-500" to="/leave-requests" />
+        {isAdmin && (
+          <StatCard label="Types de congés" value={stats.leaveTypes} color="border-green-500"  to="/leave-types" />
+        )}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
         <div className="card text-center"><p className="text-4xl font-bold text-yellow-500 mb-1">{stats.pending}</p><p className="text-sm text-gray-500">En attente</p></div>

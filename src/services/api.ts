@@ -12,9 +12,26 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+// Restore token on module load (before any request)
+const storedToken = localStorage.getItem('lm_token')
+if (storedToken) {
+  api.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`
+}
+
 api.interceptors.response.use(
   (res) => res,
   (err) => {
+    const url: string = err.config?.url ?? ''
+    // Only redirect to login on 401 if not already there and not a session restore call
+    if (
+      err.response?.status === 401 &&
+      !url.includes('/auth/') &&
+      window.location.pathname !== '/login'
+    ) {
+      localStorage.removeItem('lm_token')
+      delete api.defaults.headers.common['Authorization']
+      window.location.href = '/login'
+    }
     const msg =
       err.response?.data?.message ??
       (typeof err.response?.data === 'string' ? err.response.data : null) ??
@@ -77,8 +94,8 @@ export const leaveRequestApi = {
     api.put(`/leave-requests/${id}/approve`, { managerComment: comment }),
   reject: (id: number, comment: string): Promise<AxiosResponse<LeaveRequest>> =>
     api.put(`/leave-requests/${id}/reject`, { managerComment: comment }),
-  cancel: (id: number): Promise<AxiosResponse<void>> =>
-    api.delete(`/leave-requests/${id}`),
+  cancel: (id: number): Promise<AxiosResponse<LeaveRequest>> =>
+    api.put(`/leave-requests/${id}/cancel`),
 }
 
 export default api
